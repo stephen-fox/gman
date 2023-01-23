@@ -151,7 +151,8 @@ func createOrReadManual(ctx context.Context, savePath string, packageID string, 
 
 	err := config.genPackageManual(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to generate package manual for '%s' - %w", err)
+		return fmt.Errorf("failed to generate package manual for '%s' - %w",
+			packageID, err)
 	}
 
 	man := exec.CommandContext(ctx, "man", savePath)
