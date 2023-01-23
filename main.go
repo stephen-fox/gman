@@ -224,8 +224,6 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 		return fmt.Errorf("failed to get go package info - %w", err)
 	}
 
-	styler := &definitionStyler{}
-
 	// Write current token.
 	if p.CurrentSection != "" {
 		_, err = p.Writer.Write([]byte(".SH " + p.CurrentSection + "\n"))
@@ -233,6 +231,8 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 			return err
 		}
 	}
+
+	styler := &definitionStyler{}
 
 	for p.Next(styler.styleize, nil) {
 		_, err = p.Writer.Write([]byte(".SH " + p.CurrentSection + "\n"))
@@ -265,7 +265,9 @@ func (o *packageManualConfig) packageInfo(p *parser) error {
 		return err
 	}
 
-	if !p.Next(nil, nil) {
+	styler := &introStyler{}
+
+	if !p.Next(styler.styleize, nil) {
 		return p.Err()
 	}
 
@@ -347,6 +349,25 @@ func isTitle(s string) bool {
 	return true
 }
 
+type introStyler struct{}
+
+func (o *introStyler) styleize(line string) string {
+	if !isEmptyLine(line) {
+		line = strings.ReplaceAll(line, "Deprecated: ", "\n.I Deprecated:\n")
+
+		switch {
+		case strings.HasPrefix(line, "# "):
+			line = ".SH " + strings.ToUpper(line[2:])
+		case strings.HasPrefix(line, "\x09"):
+			line = ".sp 0\n" + line
+		case unicode.IsUpper(rune(line[0])) && strings.HasSuffix(line, ":"):
+			line = ".sp 0\n.B " + line
+		}
+	}
+
+	return line
+}
+
 type definitionStyler struct{}
 
 func (o *definitionStyler) styleize(line string) string {
@@ -354,17 +375,16 @@ func (o *definitionStyler) styleize(line string) string {
 		line = strings.ReplaceAll(line, "Deprecated: ", "\n.I Deprecated:\n")
 
 		switch {
-		case !unicode.IsSpace(rune(line[0])):
-			line = ".sp 0\n.B " + line
+		case strings.HasPrefix(line, "# "):
+			line = ".SH " + strings.ToUpper(line[2:])
 		case strings.HasPrefix(line, "\x09"):
 			if strings.HasPrefix(strings.TrimSpace(line), "// ") {
 				line = ".sp 0\n" + line
 			} else {
 				line = ".sp 0\n.B " + line
 			}
-
-		case strings.HasPrefix(line, "# "):
-			line = ".SH " + strings.ToUpper(line[2:])
+		case !unicode.IsSpace(rune(line[0])):
+			line = ".sp 0\n.B " + line
 		}
 	}
 
