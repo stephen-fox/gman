@@ -48,13 +48,20 @@ func mainWithError() error {
 	defer cancelFn()
 
 	// TODO: Allow this to be overriden via argument.
-	version, err := goVersion(ctx)
+	goVer, err := goVersion(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, packageID := range flag.Args() {
-		err = createOrReadManual(ctx, *savePath, packageID, version)
+		err = createOrReadManual(ctx, createOrReadManualConfig{
+			savePath:   *savePath,
+			goOS:       "",
+			goArch:     "",
+			packageID:  packageID,
+			goVersion:  goVer,
+			pkgVersion: "",
+		})
 		if err != nil {
 			return err
 		}
@@ -91,37 +98,51 @@ func goVersion(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("failed to find go version number in stdout - checked: '%s'", stdoutRaw)
 }
 
-func createOrReadManual(ctx context.Context, savePath string, packageID string, version string) error {
-	if packageID == "." {
+type createOrReadManualConfig struct {
+	savePath   string
+	goOS       string
+	goArch     string
+	packageID  string
+	goVersion  string
+	pkgVersion string
+}
+
+func createOrReadManual(ctx context.Context, config createOrReadManualConfig) error {
+	if config.packageID == "." {
 		return errors.New("'.' doc is not currently supported :(")
 	}
 
 	var writer io.Writer
 
-	switch savePath {
+	switch config.savePath {
 	case "-":
 		writer = os.Stdout
-		savePath = os.Stdout.Name()
+		config.savePath = os.Stdout.Name()
 	default:
-		if savePath == "" {
+		if config.savePath == "" {
 			homeDirPath, err := os.UserHomeDir()
 			if err != nil {
 				return err
 			}
 
-			packageName := filepath.Base(packageID)
+			packageName := filepath.Base(config.packageID)
 
-			savePath = filepath.Join(homeDirPath, ".gman", version, packageID, packageName+".man")
+			config.savePath = filepath.Join(
+				homeDirPath,
+				".gman",
+				config.goVersion,
+				config.packageID,
+				packageName+".man")
 		}
 
-		info, err := checkForExistingManual(savePath)
+		info, err := checkForExistingManual(config.savePath)
 		if err != nil {
 			return fmt.Errorf("failed to check if manual exists for '%s' - %w",
-				packageID, err)
+				config.packageID, err)
 		}
 
 		if info.Exists {
-			man := exec.CommandContext(ctx, "man", savePath)
+			man := exec.CommandContext(ctx, "man", config.savePath)
 			man.Stdin = os.Stdin
 			man.Stdout = os.Stdout
 			man.Stderr = os.Stderr
@@ -134,7 +155,7 @@ func createOrReadManual(ctx context.Context, savePath string, packageID string, 
 			return nil
 		}
 
-		f, err := os.OpenFile(savePath, os.O_CREATE|os.O_WRONLY, 0o600)
+		f, err := os.OpenFile(config.savePath, os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
@@ -143,19 +164,19 @@ func createOrReadManual(ctx context.Context, savePath string, packageID string, 
 		writer = f
 	}
 
-	config := &packageManualConfig{
-		PackageID: packageID,
-		GoVersion: version,
+	genConfig := &packageManualConfig{
+		PackageID: config.packageID,
+		GoVersion: config.goVersion,
 		Writer:    writer,
 	}
 
-	err := config.genPackageManual(ctx)
+	err := genConfig.genPackageManual(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to generate package manual for '%s' - %w",
-			packageID, err)
+			config.packageID, err)
 	}
 
-	man := exec.CommandContext(ctx, "man", savePath)
+	man := exec.CommandContext(ctx, "man", config.savePath)
 	man.Stdin = os.Stdin
 	man.Stdout = os.Stdout
 	man.Stderr = os.Stderr
