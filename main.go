@@ -324,16 +324,21 @@ type packageManualConfig struct {
 }
 
 func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
-	goDoc := exec.CommandContext(ctx, "go", "doc", "-all", o.Info.Name)
-	goDoc.Env = replaceGoEnvsIn(o.Info.GoOS, o.Info.GoArch, os.Environ())
+	stdout, needsGet, err := goDocPackage(ctx, "", o.Info)
+	if needsGet {
+		var tmpDirPath string
+		tmpDirPath, err = goGetPackage(ctx, o.Info)
+		if err != nil {
+			return fmt.Errorf("failed to 'go get' package - %w", err)
+		}
 
-	stderr := bytes.NewBuffer(nil)
-	goDoc.Stderr = stderr
-
-	stdout, err := goDoc.Output()
+		stdout, _, err = goDocPackage(ctx, tmpDirPath, o.Info)
+		if err != nil {
+			return fmt.Errorf("failed to 'go doc' package after getting it - %w", err)
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("failed to execute '%s' - stderr: '%s' - %w",
-			goDoc.Args, stderr.String(), err)
+		return fmt.Errorf("failed to 'go doc' package - %w", err)
 	}
 
 	p := &parser{
@@ -364,6 +369,50 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 	}
 
 	return p.Err()
+}
+
+func goDocPackage(ctx context.Context, cwd string, info *PackageInfo) ([]byte, bool, error) {
+	goDoc := exec.CommandContext(ctx, "go", "doc", "-all", info.Name)
+	goDoc.Env = replaceGoEnvsIn(info.GoOS, info.GoArch, os.Environ())
+	goDoc.Dir = cwd
+
+	stderr := bytes.NewBuffer(nil)
+	goDoc.Stderr = stderr
+
+	stdout, err := goDoc.Output()
+	if err != nil {
+		needsGet := strings.HasPrefix(
+			stderr.String(),
+			"doc: no required module provides package "+info.ID)
+
+		return nil, needsGet, fmt.Errorf("failed to execute '%s' - stderr: '%s' - %w",
+			goDoc.Args, stderr.String(), err)
+	}
+
+	return stdout, false, nil
+}
+
+func goGetPackage(ctx context.Context, info *PackageInfo) (string, error) {
+	tempDirPath, err := os.MkdirTemp("", "")
+	if err != nil {
+		return "", err
+	}
+
+	err = os.WriteFile(filepath.Join(tempDirPath, "go.mod"), []byte("module temp\n"), 0o600)
+	if err != nil {
+		return "", err
+	}
+
+	goGet := exec.CommandContext(ctx, "go", "get", info.ID)
+	goGet.Dir = tempDirPath
+
+	out, err := goGet.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to execute '%s' - %w - output: '%s'",
+			goGet.String(), err, out)
+	}
+
+	return tempDirPath, nil
 }
 
 func (o *packageManualConfig) packageInfo(p *parser) error {
