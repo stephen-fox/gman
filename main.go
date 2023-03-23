@@ -51,6 +51,7 @@ OPTIONS
 	goOSArg     = "s"
 	goArchArg   = "a"
 	genOnlyArg  = "G"
+	regenArg    = "F"
 
 	outputPathDefaultUsage = "~/.gman/<go-verion>/<package-name>.man"
 )
@@ -73,6 +74,10 @@ func mainWithError() error {
 		genOnlyArg,
 		false,
 		"Generate the manual page and exit")
+	regen := flag.Bool(
+		regenArg,
+		false,
+		"Regenerate the manual page even if one already exists")
 	savePath := flag.String(
 		savePathArg,
 		"",
@@ -114,6 +119,7 @@ func mainWithError() error {
 	for _, packageID := range flag.Args() {
 		err = createOrReadManual(ctx, createOrReadManualConfig{
 			genOnly:   *genOnly,
+			regen:     *regen,
 			savePath:  *savePath,
 			goOS:      *goOS,
 			goArch:    *goArch,
@@ -174,6 +180,7 @@ func goVersion(ctx context.Context) (string, error) {
 
 type createOrReadManualConfig struct {
 	genOnly   bool
+	regen     bool
 	savePath  string
 	goOS      string
 	goArch    string
@@ -226,7 +233,7 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 				config.packageID, err)
 		}
 
-		if info.Exists {
+		if !config.regen && info.Exists {
 			if config.genOnly {
 				return nil
 			}
@@ -244,7 +251,12 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 			return nil
 		}
 
-		f, err := os.OpenFile(config.savePath, os.O_CREATE|os.O_WRONLY, 0o600)
+		fileFlags := os.O_CREATE | os.O_WRONLY
+		if !config.regen {
+			fileFlags |= os.O_TRUNC
+		}
+
+		f, err := os.OpenFile(config.savePath, fileFlags, 0o600)
 		if err != nil {
 			return err
 		}
