@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 )
@@ -36,7 +37,18 @@ func mainWithError() error {
 		"o",
 		"",
 		"The file path to save the manual to. "+
-			"Specify '-' to indicate stdout (default: "+outputPathDefaultUsage)
+			"Specify '-' to use stdout\n(default: "+
+			outputPathDefaultUsage+")")
+	goOS := flag.String(
+		"s",
+		goBuildEnvOrRuntime("GOOS"),
+		"The GOOS (target operating system) to lookup (defaults to\n"+
+			"GOOS env value or runtime.GOOS)")
+	goArch := flag.String(
+		"a",
+		goBuildEnvOrRuntime("GOARCH"),
+		"The GOARCH (target CPU) to lookup (defaults to GOARCH env\n"+
+			"value or runtime.GOARCH)")
 
 	flag.Parse()
 
@@ -55,12 +67,11 @@ func mainWithError() error {
 
 	for _, packageID := range flag.Args() {
 		err = createOrReadManual(ctx, createOrReadManualConfig{
-			savePath:   *savePath,
-			goOS:       "",
-			goArch:     "",
-			packageID:  packageID,
-			goVersion:  goVer,
-			pkgVersion: "",
+			savePath:  *savePath,
+			goOS:      *goOS,
+			goArch:    *goArch,
+			packageID: packageID,
+			goVersion: goVer,
 		})
 		if err != nil {
 			return err
@@ -68,6 +79,22 @@ func mainWithError() error {
 	}
 
 	return nil
+}
+
+func goBuildEnvOrRuntime(envName string) string {
+	value := os.Getenv(envName)
+	if value != "" {
+		return value
+	}
+
+	switch envName {
+	case "GOOS":
+		return runtime.GOOS
+	case "GOARCH":
+		return runtime.GOARCH
+	default:
+		return ""
+	}
 }
 
 func goVersion(ctx context.Context) (string, error) {
@@ -99,12 +126,11 @@ func goVersion(ctx context.Context) (string, error) {
 }
 
 type createOrReadManualConfig struct {
-	savePath   string
-	goOS       string
-	goArch     string
-	packageID  string
-	goVersion  string
-	pkgVersion string
+	savePath  string
+	goOS      string
+	goArch    string
+	packageID string
+	goVersion string
 }
 
 func createOrReadManual(ctx context.Context, config createOrReadManualConfig) error {
@@ -112,7 +138,12 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 		return errors.New("'.' doc is not currently supported :(")
 	}
 
-	var writer io.Writer
+	info, err := extractPackageInfo(config.packageID, config.goOS, config.goArch)
+	if err != nil {
+		return err
+	}
+
+	var writer io.WriteCloser
 
 	switch config.savePath {
 	case "-":
@@ -125,14 +156,20 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 				return err
 			}
 
-			packageName := filepath.Base(config.packageID)
+			manualFileName := filepath.Base(info.Name)
+			if info.IsStdLib {
+				manualFileName = manualFileName + "-" + config.goVersion
+			} else if info.Version != "" {
+				manualFileName = manualFileName + "-" + info.Version
+			}
 
 			config.savePath = filepath.Join(
 				homeDirPath,
 				".gman",
-				config.goVersion,
-				config.packageID,
-				packageName+".man")
+				config.goOS,
+				config.goArch,
+				info.Name,
+				manualFileName+".man")
 		}
 
 		info, err := checkForExistingManual(config.savePath)
@@ -165,13 +202,19 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 	}
 
 	genConfig := &packageManualConfig{
-		PackageID: config.packageID,
-		GoVersion: config.goVersion,
-		Writer:    writer,
+		Info:   info,
+		GoVer:  config.goVersion,
+		Writer: writer,
 	}
 
-	err := genConfig.genPackageManual(ctx)
+	err = genConfig.genPackageManual(ctx)
 	if err != nil {
+		if writer != os.Stdout {
+			// Remove empty file.
+			_ = writer.Close()
+			_ = os.Remove(config.savePath)
+		}
+
 		return fmt.Errorf("failed to generate package manual for '%s' - %w",
 			config.packageID, err)
 	}
@@ -187,6 +230,62 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 	}
 
 	return nil
+}
+
+func extractPackageInfo(packageID string, goOS string, goArch string) (*PackageInfo, error) {
+	if strings.Contains(packageID, "..") {
+		return nil, errors.New("package id contains '..'")
+	}
+
+	name := packageID
+	isStdLib := true
+	var version string
+
+	before, after, hasVersion := strings.Cut(packageID, "@")
+	if hasVersion {
+		version = after
+		name = before
+		isStdLib = false
+	}
+
+	if isStdLib && strings.Contains(packageID, ".") {
+		isStdLib = false
+	}
+
+	return &PackageInfo{
+		ID:       packageID,
+		Name:     name,
+		Version:  version,
+		IsStdLib: isStdLib,
+		GoOS:     goOS,
+		GoArch:   goArch,
+	}, nil
+}
+
+type PackageInfo struct {
+	// ID is the package's ID (e.g., "crypto/tls"
+	// or "golang.org/x/sys/unix@vX.Y.Z").
+	ID string
+
+	// Name is the package's name (e.g., "crypto/tls"
+	// or "golang.org/x/sys/unix" - basically, the ID
+	// without the version).
+	Name string
+
+	// Version is the package's version - if any.
+	Version string
+
+	// IsStdLib is true if the package is part of the Go
+	// standard library.
+	IsStdLib bool
+
+	// GoOS is the GOOS value used when generating
+	// the documentation.
+	GoOS string
+
+	// GoArch is the GOARCH value used when generating
+	// the documentation.
+	GoArch string
 }
 
 func checkForExistingManual(fullPath string) (*manualInfo, error) {
@@ -219,13 +318,15 @@ type manualInfo struct {
 }
 
 type packageManualConfig struct {
-	PackageID string
-	GoVersion string
-	Writer    io.Writer
+	Info   *PackageInfo
+	GoVer  string
+	Writer io.Writer
 }
 
 func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
-	goDoc := exec.CommandContext(ctx, "go", "doc", "-all", o.PackageID)
+	goDoc := exec.CommandContext(ctx, "go", "doc", "-all", o.Info.Name)
+	goDoc.Env = replaceGoEnvsIn(o.Info.GoOS, o.Info.GoArch, os.Environ())
+
 	stderr := bytes.NewBuffer(nil)
 	goDoc.Stderr = stderr
 
@@ -266,8 +367,23 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 }
 
 func (o *packageManualConfig) packageInfo(p *parser) error {
+	version := o.Info.Version
+	if o.Info.IsStdLib {
+		version = o.GoVer
+	}
+
 	// .TH foo 3 "" "version 1.0"
-	_, err := p.Writer.Write([]byte(`.TH ` + o.PackageID + ` 3 "" "go ` + o.GoVersion + `"` + "\n"))
+	_, err := p.Writer.Write([]byte(`.TH ` + o.Info.ID + ` 3 "" "go ` + version + `"` + "\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = p.Writer.Write([]byte(".SH PLATFORM\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = p.Writer.Write([]byte(o.Info.GoOS + " " + o.Info.GoArch + "\n"))
 	if err != nil {
 		return err
 	}
@@ -293,6 +409,33 @@ func (o *packageManualConfig) packageInfo(p *parser) error {
 	}
 
 	return nil
+}
+
+func replaceGoEnvsIn(goOS string, goArch string, env []string) []string {
+	foundOS := false
+	foundArch := false
+
+	for i, keyValue := range env {
+		before, _, _ := strings.Cut(keyValue, "=")
+		switch before {
+		case "GOOS":
+			env[i] = "GOOS=" + goOS
+			foundOS = true
+		case "GOARCH":
+			env[i] = "GOARCH=" + goArch
+			foundArch = true
+		}
+	}
+
+	if !foundOS {
+		env = append(env, "GOOS="+goOS)
+	}
+
+	if !foundArch {
+		env = append(env, "GOARCH="+goArch)
+	}
+
+	return env
 }
 
 func isEmptyLine(line string) bool {
