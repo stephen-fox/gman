@@ -40,8 +40,8 @@ EXAMPLES
   Generate and view the manual for v0.4.0 of "golang.org/x/crypto/ssh":
     $ ` + appName + ` golang.org/x/crypto/ssh@v0.4.0
 
-  Only generate the manual for "syscall" for OpenBSD:
-    $ ` + appName + ` -` + goOSArg + ` openbsd bytes
+  Generate the manual for the "syscall" library for OpenBSD and exit:
+    $ ` + appName + ` -` + genOnlyArg + ` -` + goOSArg + ` openbsd bytes
 
 OPTIONS
 `
