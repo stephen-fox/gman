@@ -426,7 +426,7 @@ func goDocPackage(ctx context.Context, cwd string, info *PackageInfo) ([]byte, b
 	if err != nil {
 		needsGet := strings.HasPrefix(
 			stderr.String(),
-			"doc: no required module provides package "+info.ID)
+			"doc: no required module provides package "+info.Name)
 
 		return nil, needsGet, fmt.Errorf("failed to execute '%s' - stderr: '%s' - %w",
 			goDoc.Args, stderr.String(), err)
