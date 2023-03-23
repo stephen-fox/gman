@@ -30,6 +30,19 @@ SYNOPSIS
 DESCRIPTION
   A manual page generator for Go packages.
 
+EXAMPLES
+  Generate and view the "crypto/tls" library manual:
+    $ ` + appName + ` crypto/tls
+
+  Generate and view the manual for "golang.org/x/sys/unix" for FreeBSD:
+    $ ` + appName + ` -` + goOSArg + ` freebsd golang.org/x/sys/unix
+
+  Generate and view the manual for v0.4.0 of "golang.org/x/crypto/ssh":
+    $ ` + appName + ` golang.org/x/crypto/ssh@v0.4.0
+
+  Only generate the manual for "syscall" for OpenBSD:
+    $ ` + appName + ` -` + goOSArg + ` openbsd bytes
+
 OPTIONS
 `
 
