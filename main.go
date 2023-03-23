@@ -56,6 +56,10 @@ func mainWithError() error {
 		helpArg,
 		false,
 		"Display this information")
+	genOnly := flag.Bool(
+		genOnlyArg,
+		false,
+		"Generate the manual page and exit")
 	savePath := flag.String(
 		savePathArg,
 		"",
@@ -96,6 +100,7 @@ func mainWithError() error {
 
 	for _, packageID := range flag.Args() {
 		err = createOrReadManual(ctx, createOrReadManualConfig{
+			genOnly:   *genOnly,
 			savePath:  *savePath,
 			goOS:      *goOS,
 			goArch:    *goArch,
@@ -155,6 +160,7 @@ func goVersion(ctx context.Context) (string, error) {
 }
 
 type createOrReadManualConfig struct {
+	genOnly   bool
 	savePath  string
 	goOS      string
 	goArch    string
@@ -208,6 +214,10 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 		}
 
 		if info.Exists {
+			if config.genOnly {
+				return nil
+			}
+
 			man := exec.CommandContext(ctx, "man", config.savePath)
 			man.Stdin = os.Stdin
 			man.Stdout = os.Stdout
@@ -246,6 +256,10 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 
 		return fmt.Errorf("failed to generate package manual for '%s' - %w",
 			config.packageID, err)
+	}
+
+	if config.genOnly {
+		return nil
 	}
 
 	man := exec.CommandContext(ctx, "man", config.savePath)
