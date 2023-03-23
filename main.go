@@ -20,6 +20,25 @@ import (
 )
 
 const (
+	appName = "gman"
+
+	usage = appName + `
+
+SYNOPSIS
+  ` + appName + ` [options] <go-package-id>
+
+DESCRIPTION
+  A manual page generator for Go packages.
+
+OPTIONS
+`
+
+	helpArg     = "h"
+	savePathArg = "o"
+	goOSArg     = "s"
+	goArchArg   = "a"
+	genOnlyArg  = "G"
+
 	outputPathDefaultUsage = "~/.gman/<go-verion>/<package-name>.man"
 )
 
@@ -33,24 +52,34 @@ func main() {
 }
 
 func mainWithError() error {
+	help := flag.Bool(
+		helpArg,
+		false,
+		"Display this information")
 	savePath := flag.String(
-		"o",
+		savePathArg,
 		"",
 		"The file path to save the manual to. "+
 			"Specify '-' to use stdout\n(default: "+
 			outputPathDefaultUsage+")")
 	goOS := flag.String(
-		"s",
+		goOSArg,
 		goBuildEnvOrRuntime("GOOS"),
 		"The GOOS (target operating system) to lookup (defaults to\n"+
 			"GOOS env value or runtime.GOOS)")
 	goArch := flag.String(
-		"a",
+		goArchArg,
 		goBuildEnvOrRuntime("GOARCH"),
 		"The GOARCH (target CPU) to lookup (defaults to GOARCH env\n"+
 			"value or runtime.GOARCH)")
 
 	flag.Parse()
+
+	if *help {
+		_, _ = os.Stderr.WriteString(usage)
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
 
 	if flag.NArg() == 0 {
 		return errors.New("please specify one or more go package ids")
@@ -348,7 +377,7 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 
 	err = o.packageInfo(p)
 	if err != nil {
-		return fmt.Errorf("failed to get go package info - %w", err)
+		return fmt.Errorf("failed to generate go package manual info - %w", err)
 	}
 
 	// Write current token.
