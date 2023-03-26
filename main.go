@@ -252,7 +252,7 @@ func createOrReadManual(ctx context.Context, config createOrReadManualConfig) er
 		}
 
 		fileFlags := os.O_CREATE | os.O_WRONLY
-		if !config.regen {
+		if config.regen {
 			fileFlags |= os.O_TRUNC
 		}
 
