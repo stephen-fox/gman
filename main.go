@@ -679,20 +679,14 @@ func (o *parser) nextSection() error {
 
 		isComment := o.Scanner.Bytes()[0] == ' '
 		if !isComment && commentBuf.Len() > 0 {
-			const indent = "  "
 			const maxLen = 70
 
 			if commentBuf.Len() > maxLen {
-				err := writeStringWithIndent(commentBuf, indent, maxLen, o.Writer)
+				err := writeStringWithIndent(commentBuf, "", maxLen, o.Writer)
 				if err != nil {
 					return err
 				}
 			} else {
-				_, err := o.Writer.Write([]byte(indent))
-				if err != nil {
-					return err
-				}
-
 				_, err = io.Copy(o.Writer, commentBuf)
 				if err != nil {
 					return err
@@ -708,12 +702,13 @@ func (o *parser) nextSection() error {
 
 		switch {
 		case strings.HasPrefix(line, "# "):
-			line = ".SH " + strings.ToUpper(line[2:])
+			line = ".B " + strings.ToUpper(line[2:])
 
 			lastLine = unknownLineType
 		case strings.HasPrefix(line, "\x09"):
 			// Field defintion or field comment.
-			if strings.HasPrefix(strings.TrimSpace(line), "// ") {
+
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				line = ".sp 0\n" + line
 				lastLine = fieldCommentLineType
 			} else {
@@ -722,7 +717,8 @@ func (o *parser) nextSection() error {
 			}
 		case !unicode.IsSpace(rune(line[0])):
 			// Type defintiion.
-			line = ".sp 0\n.B " + strings.TrimSpace(line)
+
+			line = ".nf\n.B " + strings.TrimSpace(line)
 			if lastLine == defLineType {
 				line = "\n" + line
 			}
@@ -730,6 +726,14 @@ func (o *parser) nextSection() error {
 			lastLine = defLineType
 		case isComment:
 			// Comment.
+
+			if lastLine == defLineType {
+				_, err := o.Writer.Write([]byte{'\n'})
+				if err != nil {
+					return err
+				}
+			}
+
 			if commentBuf.Len() > 0 && commentBuf.Bytes()[commentBuf.Len()-1] != '\n' {
 				commentBuf.WriteByte(' ')
 			}
