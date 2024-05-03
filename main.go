@@ -410,33 +410,17 @@ func (o *packageManualConfig) genPackageManual(ctx context.Context) error {
 	}
 
 	p := &parser{
+		Config:  o,
 		Scanner: bufio.NewScanner(bytes.NewReader(stdout)),
 		Writer:  o.Writer,
 	}
 
-	err = o.packageInfo(p)
+	err = p.Parse()
 	if err != nil {
-		return fmt.Errorf("failed to generate go package manual info - %w", err)
+		return fmt.Errorf("failed to parse go doc - %w", err)
 	}
 
-	// Write current token.
-	if p.CurrentSection != "" {
-		_, err = p.Writer.Write([]byte(".SH " + p.CurrentSection + "\n"))
-		if err != nil {
-			return err
-		}
-	}
-
-	styler := &definitionStyler{}
-
-	for p.Next(styler.styleize, nil) {
-		_, err = p.Writer.Write([]byte(".SH " + p.CurrentSection + "\n"))
-		if err != nil {
-			return err
-		}
-	}
-
-	return p.Err()
+	return nil
 }
 
 func goDocPackage(ctx context.Context, cwd string, info *PackageInfo) ([]byte, bool, error) {
@@ -483,51 +467,6 @@ func goGetPackage(ctx context.Context, info *PackageInfo) (string, error) {
 	return tempDirPath, nil
 }
 
-func (o *packageManualConfig) packageInfo(p *parser) error {
-	version := o.Info.Version
-	if o.Info.IsStdLib {
-		version = o.GoVer
-	}
-
-	// .TH foo 3 "" "version 1.0"
-	_, err := p.Writer.Write([]byte(`.TH ` + o.Info.ID + ` 3 "" "go ` + version + `"` + "\n"))
-	if err != nil {
-		return err
-	}
-
-	_, err = p.Writer.Write([]byte(".SH PLATFORM\n"))
-	if err != nil {
-		return err
-	}
-
-	_, err = p.Writer.Write([]byte(o.Info.GoOS + " " + o.Info.GoArch + "\n"))
-	if err != nil {
-		return err
-	}
-
-	_, err = p.Writer.Write([]byte(".SH NAME\n"))
-	if err != nil {
-		return err
-	}
-
-	if !p.Next(nil, isEmptyLine) {
-		return p.Err()
-	}
-
-	_, err = p.Writer.Write([]byte("\n.SH SYNOPSIS\n"))
-	if err != nil {
-		return err
-	}
-
-	styler := &introStyler{}
-
-	if !p.Next(styler.styleize, nil) {
-		return p.Err()
-	}
-
-	return nil
-}
-
 func replaceGoEnvsIn(goOS string, goArch string, env []string) []string {
 	foundOS := false
 	foundArch := false
@@ -555,66 +494,276 @@ func replaceGoEnvsIn(goOS string, goArch string, env []string) []string {
 	return env
 }
 
-func isEmptyLine(line string) bool {
-	return len(strings.TrimSpace(line)) == 0
+func isEmptyLine(line []byte) bool {
+	return len(bytes.TrimSpace(line)) == 0
 }
 
 type parser struct {
-	CurrentSection string
-	Scanner        *bufio.Scanner
-	Writer         io.Writer
-	err            error
+	Config  *packageManualConfig
+	Scanner *bufio.Scanner
+	Writer  io.Writer
+	hasNext bool
+	err     error
 }
 
-func (o *parser) Err() error {
-	return o.err
-}
+func (o *parser) Parse() error {
+	if o.err != nil {
+		return o.err
+	}
 
-func (o *parser) Next(modLineFn func(string) string, stopAtFn func(string) bool) bool {
-	for o.Scanner.Scan() {
-		line := o.Scanner.Text()
+	o.hasNext = true
 
-		if isTitle(line) {
-			o.CurrentSection = line
+	o.err = o.packageIntro()
+	if o.err != nil {
+		return o.err
+	}
 
-			_, o.err = o.Writer.Write([]byte{'\n'})
-			if o.err != nil {
-				return false
-			}
-
-			return true
-		}
-
-		if stopAtFn != nil && stopAtFn(line) {
-			return true
-		}
-
-		if line == "" {
-			_, o.err = o.Writer.Write([]byte{'\n'})
-			if o.err != nil {
-				return false
-			}
-
-			continue
-		}
-
-		if modLineFn != nil {
-			line = modLineFn(line)
-		}
-
-		_, err := o.Writer.Write([]byte(line + "\n"))
-		if err != nil {
-			o.err = err
-			return false
+	for o.hasNext {
+		o.err = o.nextSection()
+		if o.err != nil {
+			return o.err
 		}
 	}
 
 	o.err = o.Scanner.Err()
 
-	return false
+	return o.err
 }
 
-func isTitle(s string) bool {
+func (o *parser) packageIntro() error {
+	version := o.Config.Info.Version
+	if o.Config.Info.IsStdLib {
+		version = o.Config.GoVer
+	}
+
+	// .TH foo 3 "" "version 1.0"
+	_, err := o.Writer.Write([]byte(`.TH ` + o.Config.Info.ID + ` 3 "" "go ` + version + `"` + "\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = o.Writer.Write([]byte(".SH PLATFORM\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = o.Writer.Write([]byte(o.Config.Info.GoOS + " " + o.Config.Info.GoArch + "\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = o.Writer.Write([]byte(".SH SYNOPSIS\n"))
+	if err != nil {
+		return err
+	}
+
+	// Synopsis
+	// package elf // import "debug/elf"
+	// Description
+	// Package elf implements access to ELF object files.
+	err = o.readToLineWithPrefix([]byte("package "))
+	if err != nil {
+		return err
+	}
+
+	_, err = o.Writer.Write([]byte(o.Scanner.Text() + "\n"))
+	if err != nil {
+		return err
+	}
+
+	_, err = o.Writer.Write([]byte(".SH DESCRIPTION\n"))
+	if err != nil {
+		return err
+	}
+
+	err = o.descriptionSection()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (o *parser) readToLineWithPrefix(prefix []byte) error {
+	for o.Scanner.Scan() {
+		if bytes.HasPrefix(o.Scanner.Bytes(), prefix) {
+			return nil
+		}
+	}
+
+	o.hasNext = false
+
+	return o.Scanner.Err()
+}
+
+func (o *parser) readToNonEmptyLine() error {
+	for o.Scanner.Scan() {
+		if len(bytes.TrimSpace(o.Scanner.Bytes())) > 0 {
+			return nil
+		}
+	}
+
+	o.hasNext = false
+
+	return o.Scanner.Err()
+}
+
+func (o *parser) descriptionSection() error {
+	for o.Scanner.Scan() {
+		if isEmptyLine(o.Scanner.Bytes()) {
+			_, err := o.Writer.Write([]byte{'\n'})
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if isSectionTitle(o.Scanner.Bytes()) {
+			return nil
+		}
+
+		line := strings.ReplaceAll(
+			strings.TrimSpace(o.Scanner.Text()),
+			"Deprecated: ",
+			"\n.I Deprecated:\n")
+
+		switch {
+		case strings.HasPrefix(line, "# "):
+			line = ".SH " + strings.ToUpper(line[2:])
+		case strings.HasPrefix(line, "\x09"):
+			line = ".sp 0\n" + line
+		case unicode.IsUpper(rune(line[0])) && strings.HasSuffix(line, ":"):
+			line = ".sp 0\n.B " + line
+		}
+
+		_, err := o.Writer.Write([]byte(line))
+		if err != nil {
+			return err
+		}
+	}
+
+	o.hasNext = false
+
+	return o.Scanner.Err()
+}
+
+func (o *parser) nextSection() error {
+	_, err := o.Writer.Write([]byte(".SH " + o.Scanner.Text() + "\n"))
+	if err != nil {
+		return err
+	}
+
+	commentBuf := bytes.NewBuffer(nil)
+	lastWasEmpty := false
+	var lastLine lineType
+
+	for o.Scanner.Scan() {
+		if isEmptyLine(o.Scanner.Bytes()) {
+			var err error
+			if commentBuf.Len() > 0 {
+				_, err = commentBuf.WriteString("\n\n")
+			} else if !lastWasEmpty {
+				_, err = o.Writer.Write([]byte("\n"))
+			}
+			if err != nil {
+				return err
+			}
+
+			lastWasEmpty = true
+
+			continue
+		}
+
+		lastWasEmpty = false
+
+		isComment := o.Scanner.Bytes()[0] == ' '
+		if !isComment && commentBuf.Len() > 0 {
+			const indent = "  "
+			const maxLen = 70
+
+			if commentBuf.Len() > maxLen {
+				err := writeStringWithIndent(commentBuf, indent, maxLen, o.Writer)
+				if err != nil {
+					return err
+				}
+			} else {
+				_, err := o.Writer.Write([]byte(indent))
+				if err != nil {
+					return err
+				}
+
+				_, err = io.Copy(o.Writer, commentBuf)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		if isSectionTitle(o.Scanner.Bytes()) {
+			return nil
+		}
+
+		line := strings.ReplaceAll(o.Scanner.Text(), "Deprecated: ", "\n.I Deprecated:\n")
+
+		switch {
+		case strings.HasPrefix(line, "# "):
+			line = ".SH " + strings.ToUpper(line[2:])
+
+			lastLine = unknownLineType
+		case strings.HasPrefix(line, "\x09"):
+			// Field defintion or field comment.
+			if strings.HasPrefix(strings.TrimSpace(line), "// ") {
+				line = ".sp 0\n" + line
+				lastLine = fieldCommentLineType
+			} else {
+				line = ".sp 0\n.B " + line
+				lastLine = fieldLineType
+			}
+		case !unicode.IsSpace(rune(line[0])):
+			// Type defintiion.
+			line = ".sp 0\n.B " + strings.TrimSpace(line)
+			if lastLine == defLineType {
+				line = "\n" + line
+			}
+
+			lastLine = defLineType
+		case isComment:
+			// Comment.
+			if commentBuf.Len() > 0 && commentBuf.Bytes()[commentBuf.Len()-1] != '\n' {
+				commentBuf.WriteByte(' ')
+			}
+
+			commentBuf.WriteString(strings.TrimSpace(line))
+			lastLine = typeCommentLineType
+
+			continue
+		default:
+			lastLine = unknownLineType
+		}
+
+		_, err := o.Writer.Write([]byte(line + "\n"))
+		if err != nil {
+			return err
+		}
+	}
+
+	o.hasNext = false
+
+	return o.Scanner.Err()
+}
+
+type lineType int
+
+const (
+	unknownLineType lineType = iota
+	defLineType
+	typeCommentLineType
+	fieldLineType
+	fieldCommentLineType
+)
+
+func isSectionTitle(s []byte) bool {
 	if len(s) == 0 {
 		return false
 	}
@@ -630,44 +779,70 @@ func isTitle(s string) bool {
 	return true
 }
 
-type introStyler struct{}
+func writeStringWithIndent(buf *bytes.Buffer, indent string, maxLen int, w io.Writer) error {
+	maxLen = maxLen - len(indent)
 
-func (o *introStyler) styleize(line string) string {
-	if !isEmptyLine(line) {
-		line = strings.ReplaceAll(line, "Deprecated: ", "\n.I Deprecated:\n")
+	bufReader := bufio.NewReaderSize(buf, buf.Len())
 
-		switch {
-		case strings.HasPrefix(line, "# "):
-			line = ".SH " + strings.ToUpper(line[2:])
-		case strings.HasPrefix(line, "\x09"):
-			line = ".sp 0\n" + line
-		case unicode.IsUpper(rune(line[0])) && strings.HasSuffix(line, ":"):
-			line = ".sp 0\n.B " + line
-		}
-	}
-
-	return line
-}
-
-type definitionStyler struct{}
-
-func (o *definitionStyler) styleize(line string) string {
-	if !isEmptyLine(line) {
-		line = strings.ReplaceAll(line, "Deprecated: ", "\n.I Deprecated:\n")
-
-		switch {
-		case strings.HasPrefix(line, "# "):
-			line = ".SH " + strings.ToUpper(line[2:])
-		case strings.HasPrefix(line, "\x09"):
-			if strings.HasPrefix(strings.TrimSpace(line), "// ") {
-				line = ".sp 0\n" + line
-			} else {
-				line = ".sp 0\n.B " + line
+	for {
+		if indent != "" {
+			_, err := w.Write([]byte(indent))
+			if err != nil {
+				return err
 			}
-		case !unicode.IsSpace(rune(line[0])):
-			line = ".sp 0\n.B " + line
 		}
-	}
 
-	return line
+		line, _ := bufReader.Peek(maxLen)
+		lineLen := len(line)
+
+		if lineLen < maxLen {
+			_, err := w.Write(bytes.TrimRightFunc(line[0:lineLen], unicode.IsSpace))
+			if err != nil {
+				return err
+			}
+
+			_, err = w.Write([]byte{'\n', '\n'})
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
+
+		upto := bytes.LastIndex(line[0:lineLen], []byte{' '})
+		eol := bytes.LastIndex(line[0:lineLen], []byte{'\n'})
+		if eol >= 0 {
+			upto = eol
+		}
+
+		if upto < 0 {
+			_, err := w.Write(line)
+			if err != nil {
+				return err
+			}
+
+			_, err = w.Write([]byte{'\n'})
+			if err != nil {
+				return err
+			}
+
+			bufReader.Discard(lineLen)
+
+			continue
+		}
+
+		wroteN, err := w.Write(line[0 : upto+1])
+		if err != nil {
+			return err
+		}
+
+		if line[upto] != '\n' {
+			_, err = w.Write([]byte{'\n'})
+			if err != nil {
+				return err
+			}
+		}
+
+		bufReader.Discard(wroteN)
+	}
 }
