@@ -609,9 +609,11 @@ func (o *parser) readToNonEmptyLine() error {
 }
 
 func (o *parser) descriptionSection() error {
+	buf := bytes.NewBuffer(nil)
+
 	for o.Scanner.Scan() {
 		if isEmptyLine(o.Scanner.Bytes()) {
-			_, err := o.Writer.Write([]byte{'\n'})
+			_, err := buf.Write([]byte{'\n'})
 			if err != nil {
 				return err
 			}
@@ -619,28 +621,30 @@ func (o *parser) descriptionSection() error {
 			continue
 		}
 
+		// We are on a "go doc -all" section like
+		// "CONSTANTS" or "FUNCTIONS".
 		if isSectionTitle(o.Scanner.Bytes()) {
+			err := writeStringWithIndent(buf, "", 70, o.Writer)
+			if err != nil {
+				return err
+			}
+
 			return nil
 		}
 
 		line := strings.ReplaceAll(
-			strings.TrimSpace(o.Scanner.Text()),
+			o.Scanner.Text(),
 			"Deprecated: ",
 			"\n.I Deprecated:\n")
 
 		switch {
 		case strings.HasPrefix(line, "# "):
 			line = ".SH " + strings.ToUpper(line[2:])
-		case strings.HasPrefix(line, "\x09"):
-			line = ".sp 0\n" + line
 		case unicode.IsUpper(rune(line[0])) && strings.HasSuffix(line, ":"):
 			line = ".sp 0\n.B " + line
 		}
 
-		_, err := o.Writer.Write([]byte(line))
-		if err != nil {
-			return err
-		}
+		buf.WriteString(line + "\n")
 	}
 
 	o.hasNext = false
