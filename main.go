@@ -1,4 +1,4 @@
-// A manual page generator for Go packages.
+// A manual page generator and viewer for Go packages.
 package main
 
 import (
@@ -25,7 +25,7 @@ const (
 	usage = appName + `
 
 SYNOPSIS
-  ` + appName + ` [options] <go-package-id>
+  ` + appName + ` [options] GO-PACKAGE-ID
 
 DESCRIPTION
   A manual page generator for Go packages.
