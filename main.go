@@ -41,7 +41,7 @@ EXAMPLES
     $ ` + appName + ` golang.org/x/crypto/ssh@v0.4.0
 
   Generate the manual for the "syscall" library for OpenBSD and exit:
-    $ ` + appName + ` -` + genOnlyArg + ` -` + goOSArg + ` openbsd bytes
+    $ ` + appName + ` -` + genOnlyArg + ` -` + goOSArg + ` openbsd syscall
 
 OPTIONS
 `

@@ -56,5 +56,5 @@ $ gman golang.org/x/crypto/ssh@v0.4.0
 Generate the manual for the "syscall" library for OpenBSD and exit:
 
 ```console
-$ gman -G -s openbsd bytes
+$ gman -G -s openbsd syscall
 ```
